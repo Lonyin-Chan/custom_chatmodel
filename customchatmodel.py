@@ -8,7 +8,8 @@ from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
     BaseMessage,
-    SystemMessage
+    SystemMessage,
+    ToolMessage
 )
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
@@ -93,11 +94,14 @@ class CustomChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         
-        tool_instructions = ""
-        for tool in self.tools:
-            tool_instructions += str(convert_to_openai_tool(tool)) + "\n"
+        last_message = messages[-1]
+        
+        if isinstance(last_message, ToolMessage) == False: # If last message not a tool call, found that when supervisor called other agent, the other agent would never hand back to supervisor
+            tool_instructions = ""
+            for tool in self.tools:
+                tool_instructions += str(convert_to_openai_tool(tool)) + "\n"
 
-        system_prompt = f"""\
+            system_prompt = f"""\
             You are an assistant that has access to the following set of tools. 
             Here are the names and descriptions for each tool:
 
@@ -108,9 +112,11 @@ class CustomChatModel(BaseChatModel):
 
             The `arguments` should be a dictionary, with keys corresponding 
             to the argument names and the values corresponding to the requested values.
+            Only return the JSON blob if you need to call a tool. If you have already found the answer
+            DO NOT call the tool again.
             """
         
-        messages.insert(0, SystemMessage(content=system_prompt))
+            messages.insert(0, SystemMessage(content=system_prompt))
         
 
         all_messages_string = "\n".join(message.content for message in messages)
@@ -124,7 +130,7 @@ class CustomChatModel(BaseChatModel):
         tool_call = self.extract_json_from_code_block(response)
         parameters = {}
 
-        if "name" in tool_call and "arguments" in tool_call:
+        if "name" in tool_call and "arguments" in tool_call and isinstance(last_message, ToolMessage) == False:
             response = ""
             parameters = {
                 "name": tool_call["name"],
