@@ -96,7 +96,7 @@ class CustomChatModel(BaseChatModel):
         
         last_message = messages[-1]
         
-        if isinstance(last_message, ToolMessage) == False: # If last message not a tool call, found that when supervisor called other agent, the other agent would never hand back to supervisor
+        if len(messages) == 1: # If last message not a tool call, found that when supervisor called other agent, the other agent would never hand back to supervisor
             tool_instructions = ""
             for tool in self.tools:
                 tool_instructions += str(convert_to_openai_tool(tool)) + "\n"
@@ -130,7 +130,7 @@ class CustomChatModel(BaseChatModel):
         tool_call = self.extract_json_from_code_block(response)
         parameters = {}
 
-        if "name" in tool_call and "arguments" in tool_call and isinstance(last_message, ToolMessage) == False:
+        if "name" in tool_call and "arguments" in tool_call and len(messages) == 1:
             response = ""
             parameters = {
                 "name": tool_call["name"],
