@@ -1,25 +1,21 @@
 import json
-from typing import Any, List, Optional, Dict, Union
+from typing import Any, List, Optional, Dict, Union, Type, Callable
 
 # LangChain Core Imports
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.runnables import Runnable
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
-    SystemMessage,I am creating a custom langchain chatmodel from the BaseChatModel class. As part of this, I need to create the _generate() method which I want it to do things like tool calling. Now I am using Gemini 2.0 flash to prompt the LLM but I am not allowed to use google packages to generate content due to GenerateContent vertex aimy company having created it's own package to handle things like governance. So I am only able to prompt Gemini 2.0 flash with one long string that needs to include everything like the tools, system_instructions and content and I will only receive 1 long string as the response. this custom package does allow me to set a response schema though. Also I can create objects and so on using google packages, just not generate content using google packages
-    ToolMessage,I am creating a custom langchain chatmodel from the BaseChatModel class. As part of this, I need to create the _generate() method which I want it to do things like tool calling. Now I am using Gemini 2.0 flash to prompt the LLM but I am not allowed to use google packages to generate content due to GenerateContent vertex aimy company having created it's own package to handle things like governance. So I am only able to prompt Gemini 2.0 flash with one long string that needs to include everything like the tools, system_instructions and content and I will only receive 1 long string as the response. this custom package does allow me to set a response schema though. Also I can create objects and so on using google packages, just not generate content using google packages
+    SystemMessage,
+    ToolMessage,
 )
-from langchain_core.outputs import ChatGeneration, ChatResult, Generation
-from langchain_core.outputs.chat_generation import ChatGenerationChunk
-from langchain_core.outputs.llm_output import LLMOutput
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import BaseTool
-from langchain_core.utils.function_calling import (
-    convert_to_openai_tool,
-    format_tool_to_openai_function,
-)
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 
 # --- Placeholder for your Company's Custom Package ---
@@ -74,8 +70,28 @@ class CustomGeminiChatModel(BaseChatModel):
     4.  Parsing the JSON string response to create a standard LangChain AIMessage,
         which can include `tool_calls`.
     """
-    custom_llm_caller: callable
+    custom_llm_caller: Callable
     model_name: str = "gemini-2.0-flash-custom"
+
+    def bind_tools(
+        self,
+        tools: List[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
+        **kwargs: Any,
+    ) -> Runnable[BaseMessage, AIMessage]:
+        """
+        Bind tools to this chat model in a way that is compatible with
+        LangChain's standard tool-calling interface.
+
+        Args:
+            tools: A list of tools to bind to the model. Can be Pydantic models,
+                   functions, or BaseTool instances.
+            **kwargs: Additional keyword arguments to bind to the model.
+
+        Returns:
+            A new Runnable instance of the model with the tools bound to it.
+        """
+        formatted_tools = [convert_to_openai_tool(tool) for tool in tools]
+        return self.bind(tools=formatted_tools, **kwargs)
 
     @property
     def _llm_type(self) -> str:
@@ -93,6 +109,7 @@ class CustomGeminiChatModel(BaseChatModel):
         The core logic for the chat model.
         """
         # Step 1: Format the prompt and define the response schema
+        # The `bind_tools` method ensures `tools` is in the kwargs.
         tools = kwargs.get("tools", [])
         formatted_prompt = self._format_prompt(messages, tools)
         response_schema = self._define_response_schema(tools)
@@ -113,7 +130,7 @@ class CustomGeminiChatModel(BaseChatModel):
                         "id": f"call_{i}",
                         "name": call["name"],
                         "args": call["args"],
-                        "type": "tool_call", # Standard field
+                        "type": "tool_call",
                     }
                     for i, call in enumerate(response_data["tool_calls"])
                 ]
@@ -142,9 +159,10 @@ class CustomGeminiChatModel(BaseChatModel):
         prompt_lines = []
 
         # Add System Message if present
-        for msg in messages:
-            if isinstance(msg, SystemMessage):
-                prompt_lines.append("SYSTEM INSTRUCTIONS:\n" + msg.content)
+        system_messages = [msg for msg in messages if isinstance(msg, SystemMessage)]
+        if system_messages:
+            prompt_lines.append("SYSTEM INSTRUCTIONS:\n" + "\n".join([msg.content for msg in system_messages]))
+
 
         # Add Chat History
         prompt_lines.append("\nCHAT HISTORY:")
@@ -158,7 +176,7 @@ class CustomGeminiChatModel(BaseChatModel):
                 else:
                     prompt_lines.append(f"ASSISTANT: {msg.content}")
             elif isinstance(msg, ToolMessage):
-                prompt_lines.append(f"TOOL_OUTPUT (for {msg.tool_call_id}):\n{msg.content}")
+                prompt_lines.append(f"TOOL_OUTPUT (for tool_call_id: {msg.tool_call_id}):\n{msg.content}")
 
 
         # Add Tool Definitions
@@ -175,7 +193,7 @@ class CustomGeminiChatModel(BaseChatModel):
                 prompt_lines.append(f"  Description: {desc}")
                 prompt_lines.append(f"  Parameters Schema: {json.dumps(params)}")
 
-        prompt_lines.append("\nYOUR TASK: Based on the instructions, history, and available tools, provide your response. If a tool is appropriate, use it. Otherwise, respond to the user directly.")
+        prompt_lines.append("\n\nYOUR TASK: Based on the instructions, history, and available tools, provide your response. If a tool is appropriate, use it by populating the 'tool_calls' field in the JSON response. Otherwise, respond to the user directly by populating the 'response_text' field.")
         return "\n".join(prompt_lines)
 
     def _define_response_schema(self, tools: List[Dict]) -> Dict[str, Any]:
@@ -206,7 +224,7 @@ class CustomGeminiChatModel(BaseChatModel):
                             "args": {
                                 "type": "object",
                                 "description": "The arguments for the tool, as a key-value map.",
-                                "properties": {} # In a real scenario, you could dynamically build this from tool schemas
+                                "properties": {} # Note: A more advanced implementation could build this dynamically
                             }
                         },
                         "required": ["name", "args"]
@@ -229,9 +247,7 @@ class GetWeather(BaseModel):
 #    You would pass your actual company's function.
 custom_chat_model = CustomGeminiChatModel(custom_llm_caller=my_company_llm_caller)
 
-# 3. Bind the tool to the model
-#    This is the standard LangChain way to make tools available to a model.
-#    Our custom model knows how to handle this from the `kwargs`.
+# 3. Bind the tool to the model using our new `bind_tools` method
 model_with_tools = custom_chat_model.bind_tools([GetWeather])
 
 # 4. Invoke the model with a prompt that should trigger the tool
@@ -239,7 +255,7 @@ prompt = "What is the weather in Boston?"
 result = model_with_tools.invoke(prompt)
 
 print("\n--- LangChain Final Output ---")
-print(result)
+print(repr(result))
 print("----------------------------\n")
 
 # Verify that the output is a standard AIMessage with tool_calls
@@ -255,9 +271,9 @@ print("✅ Successfully created and invoked the custom model with tool calling!"
 print("\n--- Invoking without a tool call ---")
 result_text = model_with_tools.invoke("Hi there!")
 print("\n--- LangChain Final Output ---")
-print(result_text)
+print(repr(result_text))
 print("----------------------------\n")
+assert isinstance(result_text, AIMessage)
 assert result_text.content != ""
-assert not result_text.tool_calls
+assert not hasattr(result_text, "tool_calls") or not result_text.tool_calls
 print("✅ Successfully handled a non-tool-calling interaction.")
-
