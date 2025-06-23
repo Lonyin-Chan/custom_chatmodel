@@ -1,11 +1,8 @@
 import json
-from typing import Any, List, Optional, Dict, Union, Type, Callable
+from typing import Any, Dict, List, Optional, Union, Type
 
-# LangChain Core Imports
-from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.runnables import Runnable
+from langchain_core.language_models.chat_models import BaseChatModel, generate_from_stream
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -14,88 +11,85 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.tools import BaseTool
-from langchain_core.utils.function_calling import convert_to_openai_tool
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.tools import BaseTool, tool
 
+# --- Mock Implementation of Your Company's Gemini Package ---
+# This function simulates the behavior of your internal package.
+# It's designed to respond similarly to how Gemini would, allowing
+# this example to be fully runnable.
+#
+# Replace the contents of this function with the actual call
+# to your company's package.
 
-# --- Placeholder for your Company's Custom Package ---
-# This function simulates the behavior you described: it takes a single string
-# and a response schema, and returns a single JSON string.
-
-def my_company_llm_caller(prompt: str, response_schema: Dict[str, Any]) -> str:
+def prompt_gemini(
+    system_instructions: str,
+    prompt: str,
+    response_schema: Optional[Dict[str, Any]] = None,
+) -> str:
     """
-    A placeholder for your company's actual LLM calling function.
-    It demonstrates how Gemini might respond based on the prompt and schema.
-    In a real scenario, this would make an API call.
-    """
-    print("--- Sending to Custom LLM Package ---")
-    print(f"Formatted Prompt:\n{prompt}")
-    print(f"\nResponse Schema:\n{json.dumps(response_schema, indent=2)}")
-    print("------------------------------------")
+    A mock function that simulates calling your internal Gemini API.
 
-    # Simulate Gemini's logic based on the prompt content
-    if "weather in Boston" in prompt:
-        # If the prompt asks for a tool, simulate Gemini returning a tool call
-        # that conforms to the response_schema.
-        response_dict = {
+    Args:
+        system_instructions: The system prompt for the model.
+        prompt: The main user prompt and conversation history.
+        response_schema: A JSON schema for function calling or structured output.
+
+    Returns:
+        A string response from the simulated model.
+    """
+    print("--- Calling Mock Gemini API ---")
+    print(f"System Instructions:\n{system_instructions}")
+    print(f"Prompt:\n{prompt}")
+    print(f"Response Schema:\n{json.dumps(response_schema, indent=2) if response_schema else 'None'}")
+    print("-----------------------------\n")
+
+    # 1. Simulation for Structured Output
+    # If a schema is provided and it's not for tools, return a matching JSON string.
+    if response_schema and response_schema.get("name") != "tool_calls":
+        if response_schema.get("name") == "WeatherSearch":
+            return json.dumps({
+                "location": "Boston, MA",
+                "unit": "celsius"
+            })
+        # Generic fallback for other schemas
+        return json.dumps({
+            "response": "This is a structured response based on the provided schema."
+        })
+
+    # 2. Simulation for Tool Calling
+    # If the prompt mentions a tool and a tool schema is present, simulate a tool call.
+    if "weather" in prompt.lower() and response_schema and response_schema.get("name") == "tool_calls":
+        # Gemini responds with a specific JSON structure for tool calls.
+        # We simulate that structure here.
+        tool_call_response = {
             "tool_calls": [
                 {
                     "name": "get_weather",
                     "args": {
-                        "location": "Boston, MA"
+                        "location": "San Francisco",
+                        "unit": "fahrenheit"
                     }
                 }
             ]
         }
-        return json.dumps(response_dict)
-    else:
-        # Otherwise, simulate a standard text response.
-        response_dict = {
-            "response_text": "Hello! How can I help you today?"
-        }
-        return json.dumps(response_dict)
+        return json.dumps(tool_call_response)
 
-# --- Custom Chat Model Implementation ---
+    # 3. Simulation for a standard chat response
+    return "Hello! This is a mock response from the custom Gemini model. How can I assist you today?"
+
+
+# --- Custom LangChain Chat Model Definition ---
 
 class CustomGeminiChatModel(BaseChatModel):
     """
-    A custom LangChain ChatModel that uses a proprietary package to call
-    the Gemini API with tool-calling capabilities.
-
-    It works by:
-    1.  Formatting all messages and tool definitions into a single string prompt.
-    2.  Defining a JSON schema that tells Gemini to respond with either a text
-        reply or a structured tool call.
-    3.  Calling the custom package with the formatted prompt and schema.
-    4.  Parsing the JSON string response to create a standard LangChain AIMessage,
-        which can include `tool_calls`.
+    A custom LangChain Chat Model that uses a proprietary internal package
+    to interact with Google's Gemini models.
     """
-    custom_llm_caller: Callable
-    model_name: str = "gemini-2.0-flash-custom"
-
-    def bind_tools(
-        self,
-        tools: List[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
-        **kwargs: Any,
-    ) -> Runnable[BaseMessage, AIMessage]:
-        """
-        Bind tools to this chat model in a way that is compatible with
-        LangChain's standard tool-calling interface.
-
-        Args:
-            tools: A list of tools to bind to the model. Can be Pydantic models,
-                   functions, or BaseTool instances.
-            **kwargs: Additional keyword arguments to bind to the model.
-
-        Returns:
-            A new Runnable instance of the model with the tools bound to it.
-        """
-        formatted_tools = [convert_to_openai_tool(tool) for tool in tools]
-        return self.bind(tools=formatted_tools, **kwargs)
 
     @property
     def _llm_type(self) -> str:
-        """Return the type of chat model."""
+        """A mandatory property to identify the LLM type."""
         return "custom-gemini-chat-model"
 
     def _generate(
@@ -106,174 +100,204 @@ class CustomGeminiChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """
-        The core logic for the chat model.
+        The core logic for interacting with the LLM. It formats the prompt,
+        handles tools and structured output, calls the API, and parses the response.
         """
-        # Step 1: Format the prompt and define the response schema
-        # The `bind_tools` method ensures `tools` is in the kwargs.
-        tools = kwargs.get("tools", [])
-        formatted_prompt = self._format_prompt(messages, tools)
-        response_schema = self._define_response_schema(tools)
+        # 1. Extract system instructions and format the main prompt.
+        system_instructions, formatted_prompt = self._format_messages(messages)
 
-        # Step 2: Call the custom LLM package
-        response_str = self.custom_llm_caller(
+        # 2. Prepare the response schema for tools or structured output.
+        # This is the key part for enabling tool use and .with_structured_output().
+        response_schema = self._prepare_response_schema(**kwargs)
+
+        # 3. Make the API call using your internal package.
+        # This is where you would replace the mock function with your real one.
+        response_str = prompt_gemini(
+            system_instructions=system_instructions,
             prompt=formatted_prompt,
             response_schema=response_schema
         )
 
-        # Step 3: Parse the response and create the AIMessage
-        try:
-            response_data = json.loads(response_str)
-            if "tool_calls" in response_data and response_data["tool_calls"]:
-                # The model decided to call one or more tools
-                tool_calls = [
-                    {
-                        "id": f"call_{i}",
-                        "name": call["name"],
-                        "args": call["args"],
-                        "type": "tool_call",
-                    }
-                    for i, call in enumerate(response_data["tool_calls"])
-                ]
-                ai_message = AIMessage(
-                    content="",  # No text content when calling tools
-                    tool_calls=tool_calls
-                )
-            else:
-                # The model returned a standard text response
-                text_response = response_data.get("response_text", "")
-                ai_message = AIMessage(content=text_response)
+        # 4. Parse the string response into a LangChain AIMessage.
+        generation = self._parse_response(response_str, response_schema)
 
-        except (json.JSONDecodeError, KeyError):
-            # If parsing fails or the structure is wrong, treat the whole
-            # output as a simple text response.
-            ai_message = AIMessage(content=response_str)
+        return ChatResult(generations=[generation])
 
-        # Step 4: Wrap the message in the standard LangChain output format
-        chat_generation = ChatGeneration(message=ai_message)
-        return ChatResult(generations=[chat_generation])
-
-    def _format_prompt(self, messages: List[BaseMessage], tools: List[Dict]) -> str:
+    @staticmethod
+    def _format_messages(messages: List[BaseMessage]) -> (str, str):
         """
-        Converts the list of messages and tools into a single string.
+        Converts a list of LangChain messages into a system prompt string
+        and a single conversational prompt string.
         """
-        prompt_lines = []
-
-        # Add System Message if present
-        system_messages = [msg for msg in messages if isinstance(msg, SystemMessage)]
-        if system_messages:
-            prompt_lines.append("SYSTEM INSTRUCTIONS:\n" + "\n".join([msg.content for msg in system_messages]))
-
-
-        # Add Chat History
-        prompt_lines.append("\nCHAT HISTORY:")
+        system_instructions_list = []
+        prompt_list = []
         for msg in messages:
-            if isinstance(msg, HumanMessage):
-                prompt_lines.append(f"USER: {msg.content}")
+            if isinstance(msg, SystemMessage):
+                system_instructions_list.append(msg.content)
+            elif isinstance(msg, HumanMessage):
+                prompt_list.append(f"User: {msg.content}")
             elif isinstance(msg, AIMessage):
+                # For AI messages with tool calls, we format them clearly.
                 if msg.tool_calls:
-                    calls = ', '.join([f"{tc['name']}({json.dumps(tc['args'])})" for tc in msg.tool_calls])
-                    prompt_lines.append(f"ASSISTANT (Tool Call): {calls}")
+                    tool_calls_str = json.dumps([
+                        {"id": tc["id"], "name": tc["name"], "args": tc["args"]} for tc in msg.tool_calls
+                    ], indent=2)
+                    prompt_list.append(f"AI: (Tool Call)\n{tool_calls_str}")
                 else:
-                    prompt_lines.append(f"ASSISTANT: {msg.content}")
+                    prompt_list.append(f"AI: {msg.content}")
             elif isinstance(msg, ToolMessage):
-                prompt_lines.append(f"TOOL_OUTPUT (for tool_call_id: {msg.tool_call_id}):\n{msg.content}")
+                prompt_list.append(f"Tool (id: {msg.tool_call_id}):\nResult: {msg.content}")
 
+        system_instructions = "\n".join(system_instructions_list)
+        formatted_prompt = "\n\n".join(prompt_list)
+        return system_instructions, formatted_prompt
 
-        # Add Tool Definitions
-        if tools:
-            prompt_lines.append("\nAVAILABLE TOOLS:")
-            prompt_lines.append("You can call one or more of the following tools. Respond using the JSON schema provided.")
-            for tool in tools:
-                # The 'function' key is standard from convert_to_openai_tool
-                func = tool.get('function', {})
-                name = func.get('name', 'unknown_tool')
-                desc = func.get('description', 'No description.')
-                params = func.get('parameters', {})
-                prompt_lines.append(f"\n- Tool: `{name}`")
-                prompt_lines.append(f"  Description: {desc}")
-                prompt_lines.append(f"  Parameters Schema: {json.dumps(params)}")
-
-        prompt_lines.append("\n\nYOUR TASK: Based on the instructions, history, and available tools, provide your response. If a tool is appropriate, use it by populating the 'tool_calls' field in the JSON response. Otherwise, respond to the user directly by populating the 'response_text' field.")
-        return "\n".join(prompt_lines)
-
-    def _define_response_schema(self, tools: List[Dict]) -> Dict[str, Any]:
+    def _prepare_response_schema(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """
-        Creates the JSON schema for the expected response from Gemini.
+        Checks for bound tools or a structured output schema in the kwargs
+        and formats it for the Gemini API.
         """
-        tool_names = [tool.get('function', {}).get('name') for tool in tools]
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "response_text": {
-                    "type": "string",
-                    "description": "The natural language response to the user, if no tool is being called."
+        # Case 1: Tools are bound using .bind_tools()
+        if "tools" in kwargs:
+            tools = kwargs["tools"]
+            return {
+                "name": "tool_calls",
+                "description": "The user wants you to use a tool.",
+                "properties": {
+                    tool.name: tool.description for tool in tools
                 },
-                "tool_calls": {
-                    "type": "array",
-                    "description": "A list of tool calls to make.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "The name of the tool to call.",
-                                # Restrict the name to available tools for better accuracy
-                                "enum": tool_names if tool_names else [],
-                            },
-                            "args": {
-                                "type": "object",
-                                "description": "The arguments for the tool, as a key-value map.",
-                                "properties": {} # Note: A more advanced implementation could build this dynamically
-                            }
-                        },
-                        "required": ["name", "args"]
-                    }
+                "type": "object",
+                "required": [tool.name for tool in tools],
+                "definitions": {
+                    tool.name: tool.args_schema.schema() for tool in tools
                 }
             }
-        }
-        return schema
+
+        # Case 2: Structured output is requested via .with_structured_output()
+        # LangChain passes the schema in the 'functions' or 'function_call' kwarg.
+        # We check for a 'response_format' that contains the schema.
+        if "response_format" in kwargs and "schema" in kwargs["response_format"]:
+            return kwargs["response_format"]["schema"]
+            
+        return None
+
+    @staticmethod
+    def _parse_response(response_str: str, response_schema: Optional[Dict[str, Any]]) -> ChatGeneration:
+        """
+        Parses the raw string from the API into an AIMessage,
+        detecting tool calls or structured output.
+        """
+        try:
+            # Assume the response might be JSON (for tool calls or structured output)
+            response_json = json.loads(response_str)
+            
+            # Check for Gemini's tool calling format
+            if "tool_calls" in response_json and isinstance(response_json["tool_calls"], list):
+                tool_calls = [
+                    {
+                        "name": call["name"],
+                        "args": call["args"],
+                        "id": f"call_{call['name']}_{i}", # Generate a unique ID for the call
+                    }
+                    for i, call in enumerate(response_json["tool_calls"])
+                ]
+                message = AIMessage(content="", tool_calls=tool_calls)
+            else:
+                # If it's JSON but not a tool call, it's structured output.
+                # We return it as a string, and LangChain will handle the final parsing.
+                message = AIMessage(content=response_str)
+        except json.JSONDecodeError:
+            # If it's not JSON, it's a standard text response.
+            message = AIMessage(content=response_str)
+
+        return ChatGeneration(message=message)
+        
+    def _stream(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        # Streaming is not implemented in this example as the mock function
+        # returns a single string. To implement this, you would need your
+        # internal package to support streaming responses.
+        yield self._generate(messages, stop, run_manager, **kwargs).generations[0]
 
 
-# --- Example Usage ---
+# --- Usage Examples ---
 
-# 1. Define a tool the model can use (using Pydantic is standard)
-class GetWeather(BaseModel):
-    """Gets the current weather in a given location."""
-    location: str = Field(..., description="The city and state, e.g., San Francisco, CA")
+if __name__ == "__main__":
+    # Initialize the custom model
+    custom_model = CustomGeminiChatModel()
 
-# 2. Instantiate the custom chat model
-#    We pass our placeholder function `my_company_llm_caller` here.
-#    You would pass your actual company's function.
-custom_chat_model = CustomGeminiChatModel(custom_llm_caller=my_company_llm_caller)
+    # --- Example 1: Standard Chat Invocation ---
+    print("--- 1. Standard Chat Invocation ---")
+    messages = [HumanMessage(content="What is the weather like today?")]
+    result = custom_model.invoke(messages)
+    print("Model Response:")
+    print(result.content)
+    print("-" * 30, "\n")
 
-# 3. Bind the tool to the model using our new `bind_tools` method
-model_with_tools = custom_chat_model.bind_tools([GetWeather])
 
-# 4. Invoke the model with a prompt that should trigger the tool
-prompt = "What is the weather in Boston?"
-result = model_with_tools.invoke(prompt)
+    # --- Example 2: Tool Calling ---
+    print("--- 2. Tool Calling Invocation ---")
 
-print("\n--- LangChain Final Output ---")
-print(repr(result))
-print("----------------------------\n")
+    # Define a simple tool
+    @tool
+    def get_weather(location: str, unit: str = "celsius") -> str:
+        """Gets the current weather in a given location."""
+        return f"The weather in {location} is 25 degrees {unit}."
 
-# Verify that the output is a standard AIMessage with tool_calls
-assert isinstance(result, AIMessage)
-assert result.content == ""
-assert len(result.tool_calls) == 1
-assert result.tool_calls[0]['name'] == 'get_weather'
-assert result.tool_calls[0]['args'] == {'location': 'Boston, MA'}
+    # Bind the tool to the model
+    model_with_tools = custom_model.bind_tools([get_weather])
 
-print("✅ Successfully created and invoked the custom model with tool calling!")
+    # Invoke the model with a prompt that should trigger the tool
+    messages = [HumanMessage(content="What's the weather like in San Francisco?")]
+    ai_msg_with_tool_call = model_with_tools.invoke(messages)
 
-# Example of a regular chat interaction
-print("\n--- Invoking without a tool call ---")
-result_text = model_with_tools.invoke("Hi there!")
-print("\n--- LangChain Final Output ---")
-print(repr(result_text))
-print("----------------------------\n")
-assert isinstance(result_text, AIMessage)
-assert result_text.content != ""
-assert not hasattr(result_text, "tool_calls") or not result_text.tool_calls
-print("✅ Successfully handled a non-tool-calling interaction.")
+    print("Model Response (Tool Call):")
+    print(ai_msg_with_tool_call)
+
+    # Simulate running the tool and returning the result to the model
+    if ai_msg_with_tool_call.tool_calls:
+        tool_call = ai_msg_with_tool_call.tool_calls[0]
+        tool_output = get_weather.invoke(tool_call["args"])
+
+        print("\nTool Output:")
+        print(tool_output)
+
+        # Create a new list of messages including the tool call and its output
+        messages.append(ai_msg_with_tool_call)
+        messages.append(
+            ToolMessage(content=tool_output, tool_call_id=tool_call["id"])
+        )
+        
+        print("\n--- Calling model again with tool result ---")
+        final_response = model_with_tools.invoke(messages)
+        print("Final Model Response:")
+        print(final_response.content)
+
+    print("-" * 30, "\n")
+
+
+    # --- Example 3: Structured Output ---
+    print("--- 3. Structured Output Invocation ---")
+
+    # Define a Pydantic schema for the desired output
+    class WeatherSearch(BaseModel):
+        """A structured representation of a weather search query."""
+        location: str = Field(..., description="The city and state, e.g., San Francisco, CA")
+        unit: Literal["celsius", "fahrenheit"] = Field(..., description="The temperature unit")
+
+    # Create a new chain with the structured output schema
+    structured_model = custom_model.with_structured_output(WeatherSearch)
+
+    # Invoke the model
+    structured_result = structured_model.invoke("How is the weather in Boston in celsius?")
+    
+    print("Structured Output Response:")
+    print(structured_result)
+    print(f"Type of result: {type(structured_result)}")
+    print(f"Location: {structured_result.location}")
+
